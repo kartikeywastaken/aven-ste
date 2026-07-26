@@ -145,7 +145,7 @@ different logical data set, so contract deployments should not change it.
 | `GITHUB_APP_INSTALLATION_ID` | Installed Aven organization instance |
 | `GITHUB_WEBHOOK_SECRET` | Validates GitHub webhook requests |
 | `GITHUB_AVEN_ORG` | Organization that owns connected repositories |
-| `GITHUB_OAUTH_CLIENT_ID` | Worker account linking |
+| `GITHUB_OAUTH_CLIENT_ID` | GitHub App client ID for account linking and user-authorized transfers |
 | `GITHUB_OAUTH_CLIENT_SECRET` | OAuth server credential |
 | `GITHUB_OAUTH_REDIRECT_URI` | Registered callback URL |
 

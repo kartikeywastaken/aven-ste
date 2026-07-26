@@ -36,7 +36,6 @@ export async function GET(request: Request) {
       client_id: env.oauthClientId,
       redirect_uri: env.oauthRedirectUri,
       state,
-      scope: "read:user",
     });
 
     return NextResponse.redirect(

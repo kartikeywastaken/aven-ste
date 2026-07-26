@@ -4,6 +4,13 @@ import { consumeOAuthState, findByGithubUserId, getIdentity, putIdentity } from 
 import { getGithubOAuthEnv } from "@/lib/github-env";
 import { authenticateBrowserSession } from "@/lib/work-session-server";
 import { addressesEqual } from "@/lib/work-session-server";
+import { checkTransferEligibility } from "@/lib/github-transfer";
+import {
+  acquireRepositoryTransfer,
+  putRepository,
+  releaseRepositoryTransfer,
+} from "@/lib/github-repository-store";
+import { transferRepositoryAsUser } from "@/lib/github-service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -130,6 +137,56 @@ export async function GET(request: Request) {
       updatedAt: now,
     });
 
+    if (stateValue.action?.type === "repository_transfer") {
+      const { streamId, destination } = stateValue.action;
+      const eligibility = await checkTransferEligibility({
+        streamId,
+        walletAddress,
+        destination,
+      });
+      if (!eligibility.eligible) {
+        return apiError(eligibility.reason, eligibility.status);
+      }
+      if (!await acquireRepositoryTransfer(streamId)) {
+        return apiError("A repository transfer is already in progress.", 409);
+      }
+
+      const { repository } = eligibility;
+      try {
+        await putRepository({
+          ...repository,
+          status: "TRANSFER_PENDING",
+          transferDestination: destination,
+          lastError: undefined,
+          updatedAt: new Date().toISOString(),
+        });
+        try {
+          await transferRepositoryAsUser(
+            repository.fullName,
+            destination,
+            accessToken,
+          );
+        } catch (error) {
+          await putRepository({
+            ...repository,
+            status: "TRANSFER_FAILED",
+            transferDestination: destination,
+            lastError: error instanceof Error ? error.message : String(error),
+            updatedAt: new Date().toISOString(),
+          });
+          const failureDestination = new URL(
+            stateValue.returnTo ?? `/stream/${encodeURIComponent(streamId)}`,
+            request.url,
+          );
+          failureDestination.searchParams.set("github", "connected");
+          failureDestination.searchParams.set("githubTransfer", "failed");
+          return NextResponse.redirect(failureDestination);
+        }
+      } finally {
+        await releaseRepositoryTransfer(streamId);
+      }
+    }
+
     // Return users to the page that initiated OAuth. This is especially
     // important for repository setup, where both stream participants link
     // their accounts independently.
@@ -138,6 +195,9 @@ export async function GET(request: Request) {
       request.url,
     );
     destination.searchParams.set("github", "connected");
+    if (stateValue.action?.type === "repository_transfer") {
+      destination.searchParams.set("githubTransfer", "pending");
+    }
     return NextResponse.redirect(destination);
   } catch (error) {
     return apiError(error);

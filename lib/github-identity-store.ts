@@ -14,10 +14,17 @@ export type GithubIdentityRecord = {
   updatedAt: string;
 };
 
-type OAuthStateValue = {
+export type OAuthStateAction = {
+  type: "repository_transfer";
+  streamId: string;
+  destination: string;
+};
+
+export type OAuthStateValue = {
   walletAddress: string;
   issuedAt: string;
   returnTo?: string;
+  action?: OAuthStateAction;
 };
 
 // ─── In-memory local fallbacks (when Redis is not configured) ─────────────────
@@ -112,6 +119,7 @@ export async function findByGithubUserId(
 export async function createOAuthState(
   walletAddress: string,
   returnTo?: string,
+  action?: OAuthStateAction,
 ): Promise<string> {
   assertProductionPersistence();
   const state = randomBytes(32).toString("hex");
@@ -119,6 +127,7 @@ export async function createOAuthState(
     walletAddress,
     issuedAt: new Date().toISOString(),
     returnTo,
+    action,
   };
   if (sharedRedis) {
     await sharedRedis.set(oauthStateKey(state), value, { ex: OAUTH_STATE_TTL_SECONDS });

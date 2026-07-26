@@ -96,9 +96,9 @@ export function getGithubWebhookEnv(): GithubWebhookEnv {
 
 export function getGithubOAuthEnv(): GithubOAuthEnv {
   const oauthClientId = required("GITHUB_OAUTH_CLIENT_ID");
-  if (!/^(Iv|Ov)/.test(oauthClientId)) {
+  if (!/^Iv/.test(oauthClientId)) {
     throw new Error(
-      "GITHUB_OAUTH_CLIENT_ID must be copied exactly from GitHub and normally starts with capital Iv or Ov.",
+      "GITHUB_OAUTH_CLIENT_ID must be the GitHub App client ID and start with capital Iv.",
     );
   }
 

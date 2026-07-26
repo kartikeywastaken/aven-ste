@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-response";
 import {
-  acquireRepositoryTransfer,
   getRepository,
   putRepository,
-  releaseRepositoryTransfer,
 } from "@/lib/github-repository-store";
-import { transferRepository, getRepositoryOwner } from "@/lib/github-service";
+import { getRepositoryOwner } from "@/lib/github-service";
 import { checkTransferEligibility } from "@/lib/github-transfer";
+import { createOAuthState } from "@/lib/github-identity-store";
+import { getGithubOAuthEnv } from "@/lib/github-env";
 import { authenticateBrowserSession, addressesEqual, getOnchainStream } from "@/lib/work-session-server";
 
 export const runtime = "nodejs";
@@ -18,11 +18,9 @@ type Params = { params: Promise<{ streamId: string }> };
 /**
  * POST /api/streams/[streamId]/repository/transfer
  *
- * Initiates repository transfer to destination (GitHub user/org).
+ * Starts the one-time GitHub user authorization required to transfer ownership.
  * Runs all preflight checks again internally — never trusts a prior preflight call.
  * Body: { destination: string }
- *
- * State transitions: ACTIVE/TRANSFER_FAILED → TRANSFER_PENDING
  */
 export async function POST(request: Request, context: Params) {
   const { streamId } = await context.params;
@@ -36,50 +34,22 @@ export async function POST(request: Request, context: Params) {
 
     const eligibility = await checkTransferEligibility({ streamId, walletAddress, destination });
     if (!eligibility.eligible) return apiError(eligibility.reason, eligibility.status);
-    const { repository } = eligibility;
-    if (!await acquireRepositoryTransfer(streamId)) {
-      return apiError("A repository transfer is already in progress.", 409);
-    }
+    const env = getGithubOAuthEnv();
+    const returnTo = `/stream/${encodeURIComponent(streamId)}`;
+    const state = await createOAuthState(walletAddress, returnTo, {
+      type: "repository_transfer",
+      streamId,
+      destination,
+    });
+    const params = new URLSearchParams({
+      client_id: env.oauthClientId,
+      redirect_uri: env.oauthRedirectUri,
+      state,
+    });
 
-    try {
-      const now = new Date().toISOString();
-
-      // Mark as TRANSFER_PENDING before calling GitHub (prevents double-submit)
-      await putRepository({
-        ...repository,
-        status: "TRANSFER_PENDING",
-        transferDestination: destination,
-        updatedAt: now,
-      });
-
-      try {
-        await transferRepository(repository.fullName, destination);
-      } catch (err) {
-        // Rollback to TRANSFER_FAILED so the client can retry
-        await putRepository({
-          ...repository,
-          status: "TRANSFER_FAILED",
-          transferDestination: destination,
-          lastError: err instanceof Error ? err.message : String(err),
-          updatedAt: new Date().toISOString(),
-        });
-        return apiError(`Transfer failed: ${err instanceof Error ? err.message : String(err)}`, 502);
-      }
-
-      // GitHub accepted the request. Keep TRANSFER_PENDING until reconciliation
-      // or the signed webhook confirms the new owner.
-      await putRepository({
-        ...repository,
-        status: "TRANSFER_PENDING",
-        transferDestination: destination,
-        lastError: undefined,
-        updatedAt: new Date().toISOString(),
-      });
-
-      return NextResponse.json({ pending: true, destination });
-    } finally {
-      await releaseRepositoryTransfer(streamId);
-    }
+    return NextResponse.json({
+      authorizationUrl: `https://github.com/login/oauth/authorize?${params.toString()}`,
+    });
   } catch (error) {
     return apiError(error);
   }

@@ -356,14 +356,15 @@ export default function StreamDetailPage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ destination: transferDestination }),
       });
-      const data = await response.json();
+      const data = await response.json() as {
+        authorizationUrl?: string;
+        error?: string;
+      };
       if (!response.ok) throw new Error(data.error ?? "Repository transfer failed.");
-      setRepository((current) => current ? {
-        ...current,
-        status: "TRANSFER_PENDING",
-        transferDestination,
-        lastError: undefined,
-      } : current);
+      if (!data.authorizationUrl) {
+        throw new Error("GitHub did not return a transfer authorization URL.");
+      }
+      window.location.assign(data.authorizationUrl);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
       await loadSessions();

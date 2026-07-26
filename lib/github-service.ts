@@ -10,8 +10,10 @@ import "server-only";
  *   - Members:                   read   (collaborator invitations)
  *
  * Never export raw Octokit instances — all GitHub operations go through the
- * typed functions below.  Installation tokens are generated on demand and
- * used immediately; they are never stored in Redis or logs.
+ * typed functions below. Installation tokens are generated on demand and
+ * used immediately. Repository transfer is the sole exception because GitHub
+ * requires a user access token for that endpoint; the callback passes that
+ * short-lived token directly and it is never stored in Redis or logs.
  */
 
 import { App } from "@octokit/app";
@@ -113,6 +115,12 @@ function githubFailure(error: unknown, operation: string): GithubIntegrationErro
     );
   }
   if (status === 403) {
+    if (operation.includes("with user authorization")) {
+      return new GithubIntegrationError(
+        `GitHub denied permission to ${operation}. Confirm the linked user is an organization owner or repository administrator and that the destination has no repository or fork named the same.`,
+        403,
+      );
+    }
     return new GithubIntegrationError(
       `GitHub denied permission to ${operation}. Verify the app installation has Repository administration: read and write, approve any pending permission update, and confirm the organization permits private repository creation and outside collaborators.`,
       502,
@@ -346,6 +354,18 @@ export async function transferRepository(
   const octokit = await getInstallationOctokit();
   const [owner, repo] = fullName.split("/");
   await githubOperation(`transfer the repository to ${newOwner}`, () =>
+    octokit.repos.transfer({ owner, repo, new_owner: newOwner }),
+  );
+}
+
+export async function transferRepositoryAsUser(
+  fullName: string,
+  newOwner: string,
+  accessToken: string,
+): Promise<void> {
+  const octokit = new Octokit({ auth: accessToken });
+  const [owner, repo] = fullName.split("/");
+  await githubOperation(`transfer the repository to ${newOwner} with user authorization`, () =>
     octokit.repos.transfer({ owner, repo, new_owner: newOwner }),
   );
 }
