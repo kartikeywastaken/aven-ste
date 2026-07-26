@@ -163,7 +163,11 @@ export default function StreamDetailPage() {
         setRepository(null);
       }
       if (connectionResponse.ok) {
-        setGithubConnection(await connectionResponse.json() as GithubConnection);
+        const connection = await connectionResponse.json() as GithubConnection;
+        setGithubConnection(connection);
+        if (connection.connected && connection.githubLogin) {
+          setTransferDestination(connection.githubLogin);
+        }
       }
       const data = await response.json();
       if (!response.ok) throw new Error(data.error ?? "Failed to load work sessions.");
@@ -685,8 +689,8 @@ export default function StreamDetailPage() {
                   <input
                     aria-label="GitHub transfer destination"
                     value={transferDestination}
-                    onChange={(event) => setTransferDestination(event.target.value)}
                     placeholder="Linked GitHub username"
+                    readOnly
                   />
                   <button
                     type="button"

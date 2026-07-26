@@ -3,6 +3,7 @@ import "server-only";
 import { getIdentity } from "./github-identity-store";
 import { getRepository, type ProjectRepositoryRecord } from "./github-repository-store";
 import { getBranchHead } from "./github-service";
+import { getTransferBranchProofs } from "./github-transfer-proof";
 import { listSessionsForStream } from "./session-store";
 import type { WorkSession } from "./work-session";
 import { addressesEqual, getOnchainStream } from "./work-session-server";
@@ -85,15 +86,12 @@ export async function checkTransferEligibility(options: {
     return { eligible: false, reason: "The final Stellar release transaction is missing.", status: 409 };
   }
 
-  const delivery = session.report?.delivery;
-  if (!delivery?.repositoryComplete || delivery.selectedBranches.length === 0) {
+  const deliveryBranches = getTransferBranchProofs(session);
+  if (!deliveryBranches) {
     return { eligible: false, reason: "The final repository delivery is incomplete.", status: 409 };
   }
-  if (delivery.selectedBranches.some((branch) => !branch.verifiedOnRemote || !branch.headCommit)) {
-    return { eligible: false, reason: "Every selected delivery branch must be verified remotely.", status: 409 };
-  }
 
-  for (const branch of delivery.selectedBranches) {
+  for (const branch of deliveryBranches) {
     const remoteHead = await getBranchHead(repository.fullName, branch.name);
     if (!remoteHead || remoteHead.toLowerCase() !== branch.headCommit.toLowerCase()) {
       return {
