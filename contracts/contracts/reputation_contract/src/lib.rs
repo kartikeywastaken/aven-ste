@@ -1,13 +1,17 @@
 #![no_std]
 
-use shared::{AttestationKind, AttestationRecord, Category, MAX_HISTORY_READ};
+use shared::{
+    AttestationKind, AttestationRecord, Category, BUMP_AMOUNT, BUMP_THRESHOLD, MAX_HISTORY_READ,
+};
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, vec, Address, Env, IntoVal, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, vec, Address, BytesN, Env, IntoVal,
+    Symbol, Vec,
 };
 
 #[contracttype]
 #[derive(Clone)]
 enum DataKey {
+    Admin,
     AttestationContract,
 }
 
@@ -38,17 +42,67 @@ pub struct ReputationContract;
 
 #[contractimpl]
 impl ReputationContract {
-    pub fn init(env: Env, attestation_contract: Address) -> Result<(), Error> {
-        if env
-            .storage()
-            .instance()
-            .has(&DataKey::AttestationContract)
-        {
-            return Err(Error::AlreadyInitialized);
-        }
+    pub fn __constructor(env: Env, admin: Address, attestation_contract: Address) {
+        env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage()
             .instance()
             .set(&DataKey::AttestationContract, &attestation_contract);
+        env.storage()
+            .instance()
+            .extend_ttl(BUMP_THRESHOLD, BUMP_AMOUNT);
+    }
+
+    /// Legacy init kept for migration compatibility. Now requires admin auth.
+    pub fn init(env: Env, admin: Address, attestation_contract: Address) -> Result<(), Error> {
+        admin.require_auth();
+        if env.storage().instance().has(&DataKey::AttestationContract) {
+            return Err(Error::AlreadyInitialized);
+        }
+        env.storage().instance().set(&DataKey::Admin, &admin);
+        env.storage()
+            .instance()
+            .set(&DataKey::AttestationContract, &attestation_contract);
+        env.storage()
+            .instance()
+            .extend_ttl(BUMP_THRESHOLD, BUMP_AMOUNT);
+        Ok(())
+    }
+
+    /// Return the current stored administrator address.
+    pub fn get_admin(env: Env) -> Result<Address, Error> {
+        env.storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)
+    }
+
+    /// Transfer administrator rights. The *stored* admin must sign.
+    pub fn set_admin(env: Env, new_admin: Address) -> Result<(), Error> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+        env.storage()
+            .instance()
+            .extend_ttl(BUMP_THRESHOLD, BUMP_AMOUNT);
+        Ok(())
+    }
+
+    /// Replace contract WASM while preserving the contract ID and all storage.
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), Error> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+        env.storage()
+            .instance()
+            .extend_ttl(BUMP_THRESHOLD, BUMP_AMOUNT);
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
         Ok(())
     }
 
@@ -56,10 +110,7 @@ impl ReputationContract {
         Ok(Self::get_score_breakdown(env, recipient)?.total)
     }
 
-    pub fn get_score_breakdown(
-        env: Env,
-        recipient: Address,
-    ) -> Result<ScoreBreakdown, Error> {
+    pub fn get_score_breakdown(env: Env, recipient: Address) -> Result<ScoreBreakdown, Error> {
         let attestation_contract: Address = env
             .storage()
             .instance()
@@ -113,11 +164,7 @@ impl ReputationContract {
         Ok(breakdown)
     }
 
-    pub fn verify_claim(
-        env: Env,
-        recipient: Address,
-        minimum_score: i128,
-    ) -> Result<bool, Error> {
+    pub fn verify_claim(env: Env, recipient: Address, minimum_score: i128) -> Result<bool, Error> {
         if minimum_score < 0 {
             return Ok(false);
         }

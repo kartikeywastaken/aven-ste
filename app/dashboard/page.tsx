@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useWallet } from "@/components/WalletProvider";
 import { getSenderStreams, getRecipientStreams, StreamObject, getWorkerAttestations } from "@/lib/stellar";
 import { pauseStream, resumeStream, cancelStream } from "@/lib/stellar";
+import { ensureCurrentDeployment } from "@/lib/deployment-client";
 import "./dashboard-v2.css";
 
 type Tab = "sending" | "receiving";
@@ -76,6 +77,7 @@ export default function DashboardPage() {
     const key = `${action}-${stream.id}`;
     setActionLoading(key);
     try {
+      await ensureCurrentDeployment();
       if (action === "pause") await pauseStream(stream.id, address);
       if (action === "resume") await resumeStream(stream.id, address);
       if (action === "cancel") await cancelStream(stream.id, address);

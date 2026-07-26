@@ -2,8 +2,15 @@
 
 use soroban_sdk::{contracttype, Address, BytesN, String};
 
-/// Approximate ledger bump for ~31 days at ~5s/ledger.
-pub const LEDGER_BUMP: u32 = 535_680;
+/// Minimum remaining TTL before we extend (30 days at ~5 s/ledger).
+pub const BUMP_THRESHOLD: u32 = 518_400; // 30 * 17_280
+
+/// Target TTL after bumping (120 days at ~5 s/ledger).
+pub const BUMP_AMOUNT: u32 = 2_073_600; // 120 * 17_280
+
+/// Backward-compatible alias — callers that imported LEDGER_BUMP keep compiling.
+/// New code should use BUMP_THRESHOLD / BUMP_AMOUNT directly.
+pub const LEDGER_BUMP: u32 = BUMP_THRESHOLD;
 
 /// Seconds per ledger used to convert a per-second rate into a per-ledger rate.
 pub const LEDGERS_PER_UNIT: i128 = 5;
@@ -94,8 +101,8 @@ pub struct AttestationRecord {
     pub id: u64,
     pub kind: AttestationKind,
     pub stream_id: u64,
-    pub request_id: String,          // session/request ID; empty string for checkpoint
-    pub checkpoint_index: u32,       // 0 for work-session / legacy
+    pub request_id: String, // session/request ID; empty string for checkpoint
+    pub checkpoint_index: u32, // 0 for work-session / legacy
     pub sender: Address,
     pub recipient: Address,
     pub amount_paid: i128,
@@ -107,7 +114,7 @@ pub struct AttestationRecord {
     pub active_duration_seconds: u64, // 0 for checkpoint / legacy
     pub minted_at_ledger: u32,
     pub client_confirmed: bool,
-    pub auto_released: bool,          // true when deadline expired without client action
-    pub verifier: Option<Address>,    // None for checkpoint / legacy paths
+    pub auto_released: bool, // true when deadline expired without client action
+    pub verifier: Option<Address>, // None for checkpoint / legacy paths
     pub report_hash: Option<BytesN<32>>, // SHA-256 of verification report; None otherwise
 }

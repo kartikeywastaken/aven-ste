@@ -34,7 +34,7 @@ if (typeof window !== "undefined") {
 export const networks = {
   testnet: {
     networkPassphrase: "Test SDF Network ; September 2015",
-    contractId: "CDCBFICBQX2A6QU4AN4WHWDE2AVNW4UIZAHQKJQGHJAWH2V7GER4UJ77",
+    contractId: "CARKXYH6YKPBY63L3SKJJMC3GZSFG3ROHJLUC5UDZAWMBDIOGKEVFA5W",
   }
 } as const
 
@@ -74,7 +74,8 @@ export const Errors = {
   33: {message:"SenderMatchesRecipient"},
   34: {message:"InvalidActiveDuration"},
   35: {message:"PaymentMismatch"},
-  36: {message:"OutstandingWithdrawals"}
+  36: {message:"OutstandingWithdrawals"},
+  37: {message:"AssetNotAllowed"}
 }
 
 
@@ -167,8 +168,31 @@ export interface AttestationRecord {
 export interface Client {
   /**
    * Construct and simulate a init transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Legacy init — kept so existing deployed instances can still be called during
+   * a migration window, but new deployments use `__constructor`.
    */
   init: ({admin, attestation_contract}: {admin: string, attestation_contract: string}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /**
+   * Construct and simulate a upgrade transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Replace the running contract WASM while preserving the contract ID,
+   * all storage, all streams, and all withdrawal records.
+   * Only the stored admin may call this.
+   */
+  upgrade: ({new_wasm_hash}: {new_wasm_hash: Buffer}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /**
+   * Construct and simulate a get_admin transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Return the current stored administrator address.
+   */
+  get_admin: (options?: MethodOptions) => Promise<AssembledTransaction<Result<string>>>
+
+  /**
+   * Construct and simulate a set_admin transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Transfer administrator rights to a new address.
+   * The *stored* admin must authenticate — not a caller-supplied address.
+   */
+  set_admin: ({new_admin}: {new_admin: string}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
 
   /**
    * Construct and simulate a get_stream transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
@@ -187,7 +211,7 @@ export interface Client {
 
   /**
    * Construct and simulate a get_verifier transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Return the verifier account trusted to reserve verified work payments.
+   * Return the current verifier address, if configured.
    */
   get_verifier: (options?: MethodOptions) => Promise<AssembledTransaction<Option<string>>>
 
@@ -228,6 +252,18 @@ export interface Client {
   get_withdrawal: ({stream_id, request_id}: {stream_id: u64, request_id: string}, options?: MethodOptions) => Promise<AssembledTransaction<Result<WithdrawalRecord>>>
 
   /**
+   * Construct and simulate a is_allowed_asset transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Return whether an asset is currently approved for new streams.
+   */
+  is_allowed_asset: ({asset}: {asset: string}, options?: MethodOptions) => Promise<AssembledTransaction<boolean>>
+
+  /**
+   * Construct and simulate a add_allowed_asset transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Approve an asset for use in new streams. Only the stored admin may call this.
+   */
+  add_allowed_asset: ({asset}: {asset: string}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /**
    * Construct and simulate a compute_available transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
    * Unreserved escrow still available for future npm work sessions.
    */
@@ -260,6 +296,12 @@ export interface Client {
   request_withdrawal: ({stream_id, recipient, request_id, amount}: {stream_id: u64, recipient: string, request_id: string, amount: i128}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
 
   /**
+   * Construct and simulate a remove_allowed_asset transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Remove an asset from the allowlist. Existing streams using it are unaffected.
+   */
+  remove_allowed_asset: ({asset}: {asset: string}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /**
    * Construct and simulate a get_recipient_streams transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
    */
   get_recipient_streams: ({recipient}: {recipient: string}, options?: MethodOptions) => Promise<AssembledTransaction<Array<u64>>>
@@ -267,6 +309,8 @@ export interface Client {
 }
 export class Client extends ContractClient {
   static async deploy<T = Client>(
+        /** Constructor/Initialization Args for the contract's `__constructor` method */
+        {admin, attestation_contract}: {admin: string, attestation_contract: string},
     /** Options for initializing a Client as well as for calling a method, with extras specific to deploying. */
     options: MethodOptions &
       Omit<ContractClientOptions, "contractId"> & {
@@ -278,11 +322,11 @@ export class Client extends ContractClient {
         format?: "hex" | "base64";
       }
   ): Promise<AssembledTransaction<T>> {
-    return ContractClient.deploy(null, options)
+    return ContractClient.deploy({admin, attestation_contract}, options)
   }
   constructor(public readonly options: ContractClientOptions) {
     super(
-      new ContractSpec([ "AAAABAAAAAAAAAAAAAAABUVycm9yAAAAAAAAJAAAAAAAAAASQWxyZWFkeUluaXRpYWxpemVkAAAAAAABAAAAAAAAAA5Ob3RJbml0aWFsaXplZAAAAAAAAgAAAAAAAAALSW52YWxpZFJhdGUAAAAAAwAAAAAAAAAOSW52YWxpZERlcG9zaXQAAAAAAAQAAAAAAAAAD0ludmFsaWREdXJhdGlvbgAAAAAFAAAAAAAAAAxUaXRsZVRvb0xvbmcAAAAGAAAAAAAAABNJbnN1ZmZpY2llbnREZXBvc2l0AAAAAAcAAAAAAAAADlN0cmVhbU5vdEZvdW5kAAAAAAAIAAAAAAAAAAlOb3RTZW5kZXIAAAAAAAAJAAAAAAAAAAxOb3RSZWNpcGllbnQAAAAKAAAAAAAAAAtXcm9uZ1N0YXR1cwAAAAALAAAAAAAAABFOb3RoaW5nVG9XaXRoZHJhdwAAAAAAAAwAAAAAAAAACE92ZXJmbG93AAAADQAAAAAAAAALSGlzdG9yeUZ1bGwAAAAADgAAAAAAAAAWSW52YWxpZENoZWNrcG9pbnRDb3VudAAAAAAADwAAAAAAAAAURHVyYXRpb25Ob3REaXZpc2libGUAAAAQAAAAAAAAABFJbnZhbGlkQ2FwUGVyY2VudAAAAAAAABEAAAAAAAAADkludmFsaWRUaW1lb3V0AAAAAAASAAAAAAAAAA9JbmRleE91dE9mUmFuZ2UAAAAAEwAAAAAAAAAWQ2hlY2twb2ludE5vdFN1Ym1pdHRlZAAAAAAAFAAAAAAAAAAaQ2hlY2twb2ludEFscmVhZHlGaW5hbGl6ZWQAAAAAABUAAAAAAAAAEEludmFsaWRSZXF1ZXN0SWQAAAAWAAAAAAAAAA1JbnZhbGlkQW1vdW50AAAAAAAAFwAAAAAAAAAZQW1vdW50RXhjZWVkc1dpdGhkcmF3YWJsZQAAAAAAABgAAAAAAAAAEldpdGhkcmF3YWxOb3RGb3VuZAAAAAAAGQAAAAAAAAAXV2l0aGRyYXdhbEFscmVhZHlFeGlzdHMAAAAAGgAAAAAAAAAVV2l0aGRyYXdhbE5vdEFwcHJvdmVkAAAAAAAAGwAAAAAAAAASV2l0aGRyYXdhbERpc3B1dGVkAAAAAAAcAAAAAAAAABpXaXRoZHJhd2FsQXBwcm92YWxSZXF1aXJlZAAAAAAAHQAAAAAAAAAITm90QWRtaW4AAAAeAAAAAAAAABVWZXJpZmllck5vdENvbmZpZ3VyZWQAAAAAAAAfAAAAAAAAABRWZXJpZmljYXRpb25SZXF1aXJlZAAAACAAAAAAAAAAFlNlbmRlck1hdGNoZXNSZWNpcGllbnQAAAAAACEAAAAAAAAAFUludmFsaWRBY3RpdmVEdXJhdGlvbgAAAAAAACIAAAAAAAAAD1BheW1lbnRNaXNtYXRjaAAAAAAjAAAAAAAAABZPdXRzdGFuZGluZ1dpdGhkcmF3YWxzAAAAAAAk",
+      new ContractSpec([ "AAAABAAAAAAAAAAAAAAABUVycm9yAAAAAAAAJQAAAAAAAAASQWxyZWFkeUluaXRpYWxpemVkAAAAAAABAAAAAAAAAA5Ob3RJbml0aWFsaXplZAAAAAAAAgAAAAAAAAALSW52YWxpZFJhdGUAAAAAAwAAAAAAAAAOSW52YWxpZERlcG9zaXQAAAAAAAQAAAAAAAAAD0ludmFsaWREdXJhdGlvbgAAAAAFAAAAAAAAAAxUaXRsZVRvb0xvbmcAAAAGAAAAAAAAABNJbnN1ZmZpY2llbnREZXBvc2l0AAAAAAcAAAAAAAAADlN0cmVhbU5vdEZvdW5kAAAAAAAIAAAAAAAAAAlOb3RTZW5kZXIAAAAAAAAJAAAAAAAAAAxOb3RSZWNpcGllbnQAAAAKAAAAAAAAAAtXcm9uZ1N0YXR1cwAAAAALAAAAAAAAABFOb3RoaW5nVG9XaXRoZHJhdwAAAAAAAAwAAAAAAAAACE92ZXJmbG93AAAADQAAAAAAAAALSGlzdG9yeUZ1bGwAAAAADgAAAAAAAAAWSW52YWxpZENoZWNrcG9pbnRDb3VudAAAAAAADwAAAAAAAAAURHVyYXRpb25Ob3REaXZpc2libGUAAAAQAAAAAAAAABFJbnZhbGlkQ2FwUGVyY2VudAAAAAAAABEAAAAAAAAADkludmFsaWRUaW1lb3V0AAAAAAASAAAAAAAAAA9JbmRleE91dE9mUmFuZ2UAAAAAEwAAAAAAAAAWQ2hlY2twb2ludE5vdFN1Ym1pdHRlZAAAAAAAFAAAAAAAAAAaQ2hlY2twb2ludEFscmVhZHlGaW5hbGl6ZWQAAAAAABUAAAAAAAAAEEludmFsaWRSZXF1ZXN0SWQAAAAWAAAAAAAAAA1JbnZhbGlkQW1vdW50AAAAAAAAFwAAAAAAAAAZQW1vdW50RXhjZWVkc1dpdGhkcmF3YWJsZQAAAAAAABgAAAAAAAAAEldpdGhkcmF3YWxOb3RGb3VuZAAAAAAAGQAAAAAAAAAXV2l0aGRyYXdhbEFscmVhZHlFeGlzdHMAAAAAGgAAAAAAAAAVV2l0aGRyYXdhbE5vdEFwcHJvdmVkAAAAAAAAGwAAAAAAAAASV2l0aGRyYXdhbERpc3B1dGVkAAAAAAAcAAAAAAAAABpXaXRoZHJhd2FsQXBwcm92YWxSZXF1aXJlZAAAAAAAHQAAAAAAAAAITm90QWRtaW4AAAAeAAAAAAAAABVWZXJpZmllck5vdENvbmZpZ3VyZWQAAAAAAAAfAAAAAAAAABRWZXJpZmljYXRpb25SZXF1aXJlZAAAACAAAAAAAAAAFlNlbmRlck1hdGNoZXNSZWNpcGllbnQAAAAAACEAAAAAAAAAFUludmFsaWRBY3RpdmVEdXJhdGlvbgAAAAAAACIAAAAAAAAAD1BheW1lbnRNaXNtYXRjaAAAAAAjAAAAAAAAABZPdXRzdGFuZGluZ1dpdGhkcmF3YWxzAAAAAAAkAAAAAAAAAA9Bc3NldE5vdEFsbG93ZWQAAAAAJQ==",
         "AAAABQAAAAAAAAAAAAAADFN0cmVhbVBhdXNlZAAAAAEAAAANc3RyZWFtX3BhdXNlZAAAAAAAAAIAAAAAAAAACXN0cmVhbV9pZAAAAAAAAAYAAAABAAAAAAAAABBwYXVzZWRfYXRfbGVkZ2VyAAAABAAAAAAAAAAC",
         "AAAABQAAAAAAAAAAAAAADFdvcmtWZXJpZmllZAAAAAEAAAANd29ya192ZXJpZmllZAAAAAAAAAcAAAAAAAAACXN0cmVhbV9pZAAAAAAAAAYAAAABAAAAAAAAAAlyZWNpcGllbnQAAAAAAAATAAAAAQAAAAAAAAAKcmVxdWVzdF9pZAAAAAAAEAAAAAAAAAAAAAAABmFtb3VudAAAAAAACwAAAAAAAAAAAAAAF2FjdGl2ZV9kdXJhdGlvbl9zZWNvbmRzAAAAAAYAAAAAAAAAAAAAAA1ldmlkZW5jZV9oYXNoAAAAAAAD7gAAACAAAAAAAAAAAAAAAA9kZWFkbGluZV9sZWRnZXIAAAAABAAAAAAAAAAC",
         "AAAABQAAAAAAAAAAAAAADVN0cmVhbUNyZWF0ZWQAAAAAAAABAAAADnN0cmVhbV9jcmVhdGVkAAAAAAAFAAAAAAAAAAlzdHJlYW1faWQAAAAAAAAGAAAAAQAAAAAAAAAGc2VuZGVyAAAAAAATAAAAAQAAAAAAAAAJcmVjaXBpZW50AAAAAAAAEwAAAAEAAAAAAAAABWFzc2V0AAAAAAAAEwAAAAAAAAAAAAAAD3RvdGFsX2RlcG9zaXRlZAAAAAALAAAAAAAAAAI=",
@@ -294,23 +338,30 @@ export class Client extends ContractClient {
         "AAAABQAAAAAAAAAAAAAAEldpdGhkcmF3YWxBcHByb3ZlZAAAAAAAAQAAABN3aXRoZHJhd2FsX2FwcHJvdmVkAAAAAAMAAAAAAAAACXN0cmVhbV9pZAAAAAAAAAYAAAABAAAAAAAAAAZzZW5kZXIAAAAAABMAAAABAAAAAAAAAApyZXF1ZXN0X2lkAAAAAAAQAAAAAAAAAAI=",
         "AAAABQAAAAAAAAAAAAAAEldpdGhkcmF3YWxEaXNwdXRlZAAAAAAAAQAAABN3aXRoZHJhd2FsX2Rpc3B1dGVkAAAAAAMAAAAAAAAACXN0cmVhbV9pZAAAAAAAAAYAAAABAAAAAAAAAAZzZW5kZXIAAAAAABMAAAABAAAAAAAAAApyZXF1ZXN0X2lkAAAAAAAQAAAAAAAAAAI=",
         "AAAABQAAAAAAAAAAAAAAE1dpdGhkcmF3YWxSZXF1ZXN0ZWQAAAAAAQAAABR3aXRoZHJhd2FsX3JlcXVlc3RlZAAAAAUAAAAAAAAACXN0cmVhbV9pZAAAAAAAAAYAAAABAAAAAAAAAAlyZWNpcGllbnQAAAAAAAATAAAAAQAAAAAAAAAKcmVxdWVzdF9pZAAAAAAAEAAAAAAAAAAAAAAABmFtb3VudAAAAAAACwAAAAAAAAAAAAAAD2RlYWRsaW5lX2xlZGdlcgAAAAAEAAAAAAAAAAI=",
-        "AAAAAAAAAAAAAAAEaW5pdAAAAAIAAAAAAAAABWFkbWluAAAAAAAAEwAAAAAAAAAUYXR0ZXN0YXRpb25fY29udHJhY3QAAAATAAAAAQAAA+kAAAACAAAAAw==",
+        "AAAAAAAAAItMZWdhY3kgaW5pdCDigJQga2VwdCBzbyBleGlzdGluZyBkZXBsb3llZCBpbnN0YW5jZXMgY2FuIHN0aWxsIGJlIGNhbGxlZCBkdXJpbmcKYSBtaWdyYXRpb24gd2luZG93LCBidXQgbmV3IGRlcGxveW1lbnRzIHVzZSBgX19jb25zdHJ1Y3RvcmAuAAAAAARpbml0AAAAAgAAAAAAAAAFYWRtaW4AAAAAAAATAAAAAAAAABRhdHRlc3RhdGlvbl9jb250cmFjdAAAABMAAAABAAAD6QAAAAIAAAAD",
+        "AAAAAAAAAJ5SZXBsYWNlIHRoZSBydW5uaW5nIGNvbnRyYWN0IFdBU00gd2hpbGUgcHJlc2VydmluZyB0aGUgY29udHJhY3QgSUQsCmFsbCBzdG9yYWdlLCBhbGwgc3RyZWFtcywgYW5kIGFsbCB3aXRoZHJhd2FsIHJlY29yZHMuCk9ubHkgdGhlIHN0b3JlZCBhZG1pbiBtYXkgY2FsbCB0aGlzLgAAAAAAB3VwZ3JhZGUAAAAAAQAAAAAAAAANbmV3X3dhc21faGFzaAAAAAAAA+4AAAAgAAAAAQAAA+kAAAACAAAAAw==",
+        "AAAAAAAAADBSZXR1cm4gdGhlIGN1cnJlbnQgc3RvcmVkIGFkbWluaXN0cmF0b3IgYWRkcmVzcy4AAAAJZ2V0X2FkbWluAAAAAAAAAAAAAAEAAAPpAAAAEwAAAAM=",
+        "AAAAAAAAAHdUcmFuc2ZlciBhZG1pbmlzdHJhdG9yIHJpZ2h0cyB0byBhIG5ldyBhZGRyZXNzLgpUaGUgKnN0b3JlZCogYWRtaW4gbXVzdCBhdXRoZW50aWNhdGUg4oCUIG5vdCBhIGNhbGxlci1zdXBwbGllZCBhZGRyZXNzLgAAAAAJc2V0X2FkbWluAAAAAAAAAQAAAAAAAAAJbmV3X2FkbWluAAAAAAAAEwAAAAEAAAPpAAAAAgAAAAM=",
         "AAAAAAAAAAAAAAAKZ2V0X3N0cmVhbQAAAAAAAQAAAAAAAAAJc3RyZWFtX2lkAAAAAAAABgAAAAEAAAPpAAAH0AAAAAxTdHJlYW1SZWNvcmQAAAAD",
         "AAAAAAAAAQhSZXNlcnZlcyBwYXltZW50IGZvciBvbmUgbnBtLXRyYWNrZWQgd29yayBzZXNzaW9uLgoKVGhlIHZlcmlmaWVyIGNhbm5vdCBjaG9vc2UgYW4gYXJiaXRyYXJ5IGFtb3VudDogdGhlIGNvbnRyYWN0IHJlY29tcHV0ZXMKYHJhdGVfcGVyX3NlY29uZCAqIGFjdGl2ZV9kdXJhdGlvbl9zZWNvbmRzYCBhbmQgY2FwcyBpdCBhdCB0aGUgdW5yZXNlcnZlZAplc2Nyb3cgcmVtYWluaW5nLiBMZWRnZXIgdGltZSBhbmQgY2hlY2twb2ludHMgZG8gbm90IHVubG9jayBmdW5kcy4AAAALdmVyaWZ5X3dvcmsAAAAABgAAAAAAAAAJc3RyZWFtX2lkAAAAAAAABgAAAAAAAAAKcmVxdWVzdF9pZAAAAAAAEAAAAAAAAAAGYW1vdW50AAAAAAALAAAAAAAAAA1ldmlkZW5jZV9oYXNoAAAAAAAD7gAAACAAAAAAAAAAF2FjdGl2ZV9kdXJhdGlvbl9zZWNvbmRzAAAAAAYAAAAAAAAAEXdvcmtfc3RhcnRfbGVkZ2VyAAAAAAAABAAAAAEAAAPpAAAAAgAAAAM=",
-        "AAAAAAAAAEZSZXR1cm4gdGhlIHZlcmlmaWVyIGFjY291bnQgdHJ1c3RlZCB0byByZXNlcnZlIHZlcmlmaWVkIHdvcmsgcGF5bWVudHMuAAAAAAAMZ2V0X3ZlcmlmaWVyAAAAAAAAAAEAAAPoAAAAEw==",
+        "AAAAAAAAADNSZXR1cm4gdGhlIGN1cnJlbnQgdmVyaWZpZXIgYWRkcmVzcywgaWYgY29uZmlndXJlZC4AAAAADGdldF92ZXJpZmllcgAAAAAAAAABAAAD6AAAABM=",
         "AAAAAAAAAAAAAAAMcGF1c2Vfc3RyZWFtAAAAAgAAAAAAAAAJc3RyZWFtX2lkAAAAAAAABgAAAAAAAAAGY2FsbGVyAAAAAAATAAAAAQAAA+kAAAACAAAAAw==",
         "AAAAAAAAAAAAAAAMc2V0X3ZlcmlmaWVyAAAAAgAAAAAAAAAFYWRtaW4AAAAAAAATAAAAAAAAAAh2ZXJpZmllcgAAABMAAAABAAAD6QAAAAIAAAAD",
+        "AAAAAAAAAAAAAAANX19jb25zdHJ1Y3RvcgAAAAAAAAIAAAAAAAAABWFkbWluAAAAAAAAEwAAAAAAAAAUYXR0ZXN0YXRpb25fY29udHJhY3QAAAATAAAAAA==",
         "AAAAAAAAAAAAAAANY2FuY2VsX3N0cmVhbQAAAAAAAAIAAAAAAAAACXN0cmVhbV9pZAAAAAAAAAYAAAAAAAAABmNhbGxlcgAAAAAAEwAAAAEAAAPpAAAAAgAAAAM=",
         "AAAAAAAAAAAAAAANY3JlYXRlX3N0cmVhbQAAAAAAAAsAAAAAAAAABnNlbmRlcgAAAAAAEwAAAAAAAAAJcmVjaXBpZW50AAAAAAAAEwAAAAAAAAAPcmF0ZV9wZXJfc2Vjb25kAAAAAAsAAAAAAAAABWFzc2V0AAAAAAAAEwAAAAAAAAAPdG90YWxfZGVwb3NpdGVkAAAAAAsAAAAAAAAAEGR1cmF0aW9uX2xlZGdlcnMAAAAEAAAAAAAAABBjaGVja3BvaW50X2NvdW50AAAABAAAAAAAAAAYd2l0aGRyYXdhYmxlX2NhcF9wZXJjZW50AAAABAAAAAAAAAAYYXBwcm92YWxfdGltZW91dF9sZWRnZXJzAAAABAAAAAAAAAAIY2F0ZWdvcnkAAAfQAAAACENhdGVnb3J5AAAAAAAAAAV0aXRsZQAAAAAAABAAAAABAAAD6QAAAAYAAAAD",
         "AAAAAAAAAAAAAAANcmVzdW1lX3N0cmVhbQAAAAAAAAIAAAAAAAAACXN0cmVhbV9pZAAAAAAAAAYAAAAAAAAABmNhbGxlcgAAAAAAEwAAAAEAAAPpAAAAAgAAAAM=",
         "AAAAAAAAADdUb3RhbCB2YWx1ZSBhbHJlYWR5IG1lYXN1cmVkIGJ5IHN1Ym1pdHRlZCBucG0gc2Vzc2lvbnMuAAAAAA5jb21wdXRlX2Vhcm5lZAAAAAAAAQAAAAAAAAAJc3RyZWFtX2lkAAAAAAAABgAAAAEAAAPpAAAACwAAAAM=",
         "AAAAAAAAAAAAAAAOZ2V0X3dpdGhkcmF3YWwAAAAAAAIAAAAAAAAACXN0cmVhbV9pZAAAAAAAAAYAAAAAAAAACnJlcXVlc3RfaWQAAAAAABAAAAABAAAD6QAAB9AAAAAQV2l0aGRyYXdhbFJlY29yZAAAAAM=",
+        "AAAAAAAAAD5SZXR1cm4gd2hldGhlciBhbiBhc3NldCBpcyBjdXJyZW50bHkgYXBwcm92ZWQgZm9yIG5ldyBzdHJlYW1zLgAAAAAAEGlzX2FsbG93ZWRfYXNzZXQAAAABAAAAAAAAAAVhc3NldAAAAAAAABMAAAABAAAAAQ==",
+        "AAAAAAAAAE1BcHByb3ZlIGFuIGFzc2V0IGZvciB1c2UgaW4gbmV3IHN0cmVhbXMuIE9ubHkgdGhlIHN0b3JlZCBhZG1pbiBtYXkgY2FsbCB0aGlzLgAAAAAAABFhZGRfYWxsb3dlZF9hc3NldAAAAAAAAAEAAAAAAAAABWFzc2V0AAAAAAAAEwAAAAEAAAPpAAAAAgAAAAM=",
         "AAAAAAAAAD9VbnJlc2VydmVkIGVzY3JvdyBzdGlsbCBhdmFpbGFibGUgZm9yIGZ1dHVyZSBucG0gd29yayBzZXNzaW9ucy4AAAAAEWNvbXB1dGVfYXZhaWxhYmxlAAAAAAAAAQAAAAAAAAAJc3RyZWFtX2lkAAAAAAAABgAAAAEAAAPpAAAACwAAAAM=",
         "AAAAAAAAAAAAAAARd2l0aGRyYXdfYXBwcm92ZWQAAAAAAAADAAAAAAAAAAlzdHJlYW1faWQAAAAAAAAGAAAAAAAAAAlyZWNpcGllbnQAAAAAAAATAAAAAAAAAApyZXF1ZXN0X2lkAAAAAAAQAAAAAQAAA+kAAAALAAAAAw==",
         "AAAAAAAAAAAAAAASYXBwcm92ZV93aXRoZHJhd2FsAAAAAAADAAAAAAAAAAlzdHJlYW1faWQAAAAAAAAGAAAAAAAAAAZzZW5kZXIAAAAAABMAAAAAAAAACnJlcXVlc3RfaWQAAAAAABAAAAABAAAD6QAAAAIAAAAD",
         "AAAAAAAAAAAAAAASZGlzcHV0ZV93aXRoZHJhd2FsAAAAAAADAAAAAAAAAAlzdHJlYW1faWQAAAAAAAAGAAAAAAAAAAZzZW5kZXIAAAAAABMAAAAAAAAACnJlcXVlc3RfaWQAAAAAABAAAAABAAAD6QAAAAIAAAAD",
         "AAAAAAAAAAAAAAASZ2V0X3NlbmRlcl9zdHJlYW1zAAAAAAABAAAAAAAAAAZzZW5kZXIAAAAAABMAAAABAAAD6gAAAAY=",
         "AAAAAAAAAExMZWdhY3kgZGlyZWN0IHJlcXVlc3RzIGFyZSBkaXNhYmxlZCB3aGVuZXZlciB0aGUgbnBtIHZlcmlmaWVyIGlzIGNvbmZpZ3VyZWQuAAAAEnJlcXVlc3Rfd2l0aGRyYXdhbAAAAAAABAAAAAAAAAAJc3RyZWFtX2lkAAAAAAAABgAAAAAAAAAJcmVjaXBpZW50AAAAAAAAEwAAAAAAAAAKcmVxdWVzdF9pZAAAAAAAEAAAAAAAAAAGYW1vdW50AAAAAAALAAAAAQAAA+kAAAACAAAAAw==",
+        "AAAAAAAAAE1SZW1vdmUgYW4gYXNzZXQgZnJvbSB0aGUgYWxsb3dsaXN0LiBFeGlzdGluZyBzdHJlYW1zIHVzaW5nIGl0IGFyZSB1bmFmZmVjdGVkLgAAAAAAABRyZW1vdmVfYWxsb3dlZF9hc3NldAAAAAEAAAAAAAAABWFzc2V0AAAAAAAAEwAAAAEAAAPpAAAAAgAAAAM=",
         "AAAAAAAAAAAAAAAVZ2V0X3JlY2lwaWVudF9zdHJlYW1zAAAAAAAAAQAAAAAAAAAJcmVjaXBpZW50AAAAAAAAEwAAAAEAAAPqAAAABg==",
         "AAAAAgAAAAAAAAAAAAAACENhdGVnb3J5AAAABgAAAAAAAAAAAAAACUZyZWVsYW5jZQAAAAAAAAAAAAAAAAAABlNhbGFyeQAAAAAAAAAAAAAAAAAGQm91bnR5AAAAAAAAAAAAAAAAAAVHcmFudAAAAAAAAAAAAAAAAAAACUFnZW50VGFzawAAAAAAAAAAAAAAAAAADFN1YnNjcmlwdGlvbg==",
         "AAAAAQAAAAAAAAAAAAAADFN0cmVhbVJlY29yZAAAABIAAAAAAAAAGGFwcHJvdmFsX3RpbWVvdXRfbGVkZ2VycwAAAAQAAAAAAAAABWFzc2V0AAAAAAAAEwAAAAAAAAAIY2F0ZWdvcnkAAAfQAAAACENhdGVnb3J5AAAAAAAAABBjaGVja3BvaW50X2NvdW50AAAABAAAAAAAAAAXY2hlY2twb2ludF9zcGFuX2xlZGdlcnMAAAAABAAAAAAAAAAQZHVyYXRpb25fbGVkZ2VycwAAAAQAAAAAAAAAAmlkAAAAAAAGAAAAAAAAABBwYXVzZWRfYXRfbGVkZ2VyAAAABAAAAAAAAAAXcGF1c2VkX2R1cmF0aW9uX2xlZGdlcnMAAAAABAAAAAAAAAAPcmF0ZV9wZXJfbGVkZ2VyAAAAAAsAAAAAAAAACXJlY2lwaWVudAAAAAAAABMAAAAAAAAABnNlbmRlcgAAAAAAEwAAAAAAAAAMc3RhcnRfbGVkZ2VyAAAABAAAAAAAAAAGc3RhdHVzAAAAAAfQAAAADFN0cmVhbVN0YXR1cwAAAAAAAAAFdGl0bGUAAAAAAAAQAAAAAAAAAA90b3RhbF9kZXBvc2l0ZWQAAAAACwAAAAAAAAAPdG90YWxfd2l0aGRyYXduAAAAAAsAAAAAAAAAGHdpdGhkcmF3YWJsZV9jYXBfcGVyY2VudAAAAAQ=",
@@ -323,6 +374,9 @@ export class Client extends ContractClient {
   }
   public readonly fromJSON = {
     init: this.txFromJSON<Result<void>>,
+        upgrade: this.txFromJSON<Result<void>>,
+        get_admin: this.txFromJSON<Result<string>>,
+        set_admin: this.txFromJSON<Result<void>>,
         get_stream: this.txFromJSON<Result<StreamRecord>>,
         verify_work: this.txFromJSON<Result<void>>,
         get_verifier: this.txFromJSON<Option<string>>,
@@ -333,12 +387,15 @@ export class Client extends ContractClient {
         resume_stream: this.txFromJSON<Result<void>>,
         compute_earned: this.txFromJSON<Result<i128>>,
         get_withdrawal: this.txFromJSON<Result<WithdrawalRecord>>,
+        is_allowed_asset: this.txFromJSON<boolean>,
+        add_allowed_asset: this.txFromJSON<Result<void>>,
         compute_available: this.txFromJSON<Result<i128>>,
         withdraw_approved: this.txFromJSON<Result<i128>>,
         approve_withdrawal: this.txFromJSON<Result<void>>,
         dispute_withdrawal: this.txFromJSON<Result<void>>,
         get_sender_streams: this.txFromJSON<Array<u64>>,
         request_withdrawal: this.txFromJSON<Result<void>>,
+        remove_allowed_asset: this.txFromJSON<Result<void>>,
         get_recipient_streams: this.txFromJSON<Array<u64>>
   }
 }

@@ -1,8 +1,8 @@
 #![no_std]
 
 use shared::{
-    AttestationKind, AttestationRecord, Category, LEDGER_BUMP, MAX_HISTORY_LEN, MAX_REQUEST_ID_LEN,
-    MAX_TITLE_LEN,
+    AttestationKind, AttestationRecord, Category, BUMP_AMOUNT, BUMP_THRESHOLD, MAX_HISTORY_LEN,
+    MAX_REQUEST_ID_LEN, MAX_TITLE_LEN,
 };
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, vec, Address, BytesN, Env,
@@ -60,6 +60,20 @@ pub struct AttestationContract;
 
 #[contractimpl]
 impl AttestationContract {
+    pub fn __constructor(env: Env, admin: Address, stream_contract: Address) {
+        env.storage().instance().set(&DataKey::Admin, &admin);
+        env.storage()
+            .instance()
+            .set(&DataKey::StreamContract, &stream_contract);
+        env.storage()
+            .instance()
+            .set(&DataKey::NextAttestationId, &1u64);
+        env.storage()
+            .instance()
+            .extend_ttl(BUMP_THRESHOLD, BUMP_AMOUNT);
+    }
+
+    /// Legacy init kept for migration compatibility. New deployments use `__constructor`.
     pub fn init(env: Env, admin: Address, stream_contract: Address) -> Result<(), Error> {
         admin.require_auth();
         if env.storage().instance().has(&DataKey::Admin) {
@@ -74,7 +88,45 @@ impl AttestationContract {
             .set(&DataKey::NextAttestationId, &1u64);
         env.storage()
             .instance()
-            .extend_ttl(LEDGER_BUMP, LEDGER_BUMP);
+            .extend_ttl(BUMP_THRESHOLD, BUMP_AMOUNT);
+        Ok(())
+    }
+
+    /// Return the current stored administrator address.
+    pub fn get_admin(env: Env) -> Result<Address, Error> {
+        env.storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)
+    }
+
+    /// Transfer administrator rights. The *stored* admin must sign.
+    pub fn set_admin(env: Env, new_admin: Address) -> Result<(), Error> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+        env.storage()
+            .instance()
+            .extend_ttl(BUMP_THRESHOLD, BUMP_AMOUNT);
+        Ok(())
+    }
+
+    /// Replace contract WASM while preserving the contract ID and all storage.
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), Error> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+        env.storage()
+            .instance()
+            .extend_ttl(BUMP_THRESHOLD, BUMP_AMOUNT);
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
         Ok(())
     }
 
@@ -135,8 +187,7 @@ impl AttestationContract {
             if request_id.is_empty() || request_id.len() > MAX_REQUEST_ID_LEN {
                 return Err(Error::InvalidRequestId);
             }
-            let dup_key =
-                DataKey::WorkSessionAttestation(stream_id, request_id.clone());
+            let dup_key = DataKey::WorkSessionAttestation(stream_id, request_id.clone());
             if env.storage().persistent().has(&dup_key) {
                 return Err(Error::DuplicateAttestation);
             }
@@ -152,7 +203,7 @@ impl AttestationContract {
 
         env.storage()
             .instance()
-            .extend_ttl(LEDGER_BUMP, LEDGER_BUMP);
+            .extend_ttl(BUMP_THRESHOLD, BUMP_AMOUNT);
 
         let id: u64 = env
             .storage()
@@ -190,23 +241,22 @@ impl AttestationContract {
         env.storage().persistent().set(&key, &record);
         env.storage()
             .persistent()
-            .extend_ttl(&key, LEDGER_BUMP, LEDGER_BUMP);
+            .extend_ttl(&key, BUMP_THRESHOLD, BUMP_AMOUNT);
 
         // Store duplicate-prevention key for WorkSession / LegacyReviewed
         if kind == AttestationKind::WorkSession || kind == AttestationKind::LegacyReviewed {
-            let dup_key =
-                DataKey::WorkSessionAttestation(stream_id, request_id);
+            let dup_key = DataKey::WorkSessionAttestation(stream_id, request_id);
             env.storage().persistent().set(&dup_key, &id);
             env.storage()
                 .persistent()
-                .extend_ttl(&dup_key, LEDGER_BUMP, LEDGER_BUMP);
+                .extend_ttl(&dup_key, BUMP_THRESHOLD, BUMP_AMOUNT);
         }
         if kind == AttestationKind::StreamCompletion {
             let completion_key = DataKey::StreamCompletionAttestation(stream_id);
             env.storage().persistent().set(&completion_key, &id);
             env.storage()
                 .persistent()
-                .extend_ttl(&completion_key, LEDGER_BUMP, LEDGER_BUMP);
+                .extend_ttl(&completion_key, BUMP_THRESHOLD, BUMP_AMOUNT);
         }
 
         // Append to recipient attestation index
@@ -225,7 +275,7 @@ impl AttestationContract {
             .set(&recipient_key, &recipient_list);
         env.storage()
             .persistent()
-            .extend_ttl(&recipient_key, LEDGER_BUMP, LEDGER_BUMP);
+            .extend_ttl(&recipient_key, BUMP_THRESHOLD, BUMP_AMOUNT);
 
         // Append to sender attestation index
         let sender_key = DataKey::SenderAttestations(sender);
@@ -238,12 +288,10 @@ impl AttestationContract {
             return Err(Error::HistoryFull);
         }
         sender_list.push_back(id);
+        env.storage().persistent().set(&sender_key, &sender_list);
         env.storage()
             .persistent()
-            .set(&sender_key, &sender_list);
-        env.storage()
-            .persistent()
-            .extend_ttl(&sender_key, LEDGER_BUMP, LEDGER_BUMP);
+            .extend_ttl(&sender_key, BUMP_THRESHOLD, BUMP_AMOUNT);
 
         AttestationMinted {
             attestation_id: id,
@@ -269,7 +317,7 @@ impl AttestationContract {
             .ok_or(Error::AttestationNotFound)?;
         env.storage()
             .persistent()
-            .extend_ttl(&key, LEDGER_BUMP, LEDGER_BUMP);
+            .extend_ttl(&key, BUMP_THRESHOLD, BUMP_AMOUNT);
         Ok(record)
     }
 
@@ -279,7 +327,7 @@ impl AttestationContract {
             Some(ids) => {
                 env.storage()
                     .persistent()
-                    .extend_ttl(&key, LEDGER_BUMP, LEDGER_BUMP);
+                    .extend_ttl(&key, BUMP_THRESHOLD, BUMP_AMOUNT);
                 ids
             }
             None => vec![&env],
@@ -292,7 +340,7 @@ impl AttestationContract {
             Some(ids) => {
                 env.storage()
                     .persistent()
-                    .extend_ttl(&key, LEDGER_BUMP, LEDGER_BUMP);
+                    .extend_ttl(&key, BUMP_THRESHOLD, BUMP_AMOUNT);
                 ids
             }
             None => vec![&env],

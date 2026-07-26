@@ -7,6 +7,7 @@ import { useWallet } from "@/components/WalletProvider";
 import { ConfirmModal } from "@/components/ConfirmModal";
 import type { WorkSession } from "@/lib/work-session";
 import { STREAM_CONTRACT_ID, STELLAR_EXPLORER } from "@/lib/contracts";
+import { ensureCurrentDeployment } from "@/lib/deployment-client";
 import {
   getStream,
   computeAvailable,
@@ -116,6 +117,7 @@ export default function StreamDetailPage() {
   const [githubConnection, setGithubConnection] = useState<GithubConnection | null>(null);
   const [repositoryError, setRepositoryError] = useState<string | null>(null);
   const [transferDestination, setTransferDestination] = useState("");
+
   async function load() {
     setLoading(true);
     try {
@@ -147,6 +149,14 @@ export default function StreamDetailPage() {
         fetch(repositoryPath, { cache: "no-store" }),
         fetch("/api/github/connection", { cache: "no-store" }),
       ]);
+      const responseContract = response.headers.get("x-aven-stream-contract");
+      if (
+        responseContract &&
+        responseContract.trim().toUpperCase() !== STREAM_CONTRACT_ID.trim().toUpperCase()
+      ) {
+        window.location.reload();
+        throw new Error("A newer contract deployment is active. Refreshing this page.");
+      }
       if (repositoryResponse.ok) {
         setRepository(await repositoryResponse.json() as ManagedRepository);
       } else if (repositoryResponse.status === 404) {
@@ -253,6 +263,7 @@ export default function StreamDetailPage() {
     setSessionAction(`${sessionId}:${action}`);
     setError(null);
     try {
+      await ensureCurrentDeployment();
       const session = sessions.find((candidate) => candidate.id === sessionId);
       if (address && session) {
         if (action === "approve") await approveReviewedWithdrawal(id, address, session.id);
@@ -383,6 +394,7 @@ export default function StreamDetailPage() {
     const preparePath = `/api/work-sessions/${encodeURIComponent(session.id)}/release/prepare`;
     const cancelPath = `/api/work-sessions/${encodeURIComponent(session.id)}/release/cancel`;
     try {
+      await ensureCurrentDeployment();
       await ensureBrowserSession();
       const prepared = await fetch(preparePath, {
         method: "POST",
@@ -429,6 +441,7 @@ export default function StreamDetailPage() {
     setError(null);
     setTxResult(null);
     try {
+      await ensureCurrentDeployment();
       if (action === "pause") await pauseStream(id, address);
       if (action === "resume") await resumeStream(id, address);
       if (action === "cancel") await cancelStream(id, address);

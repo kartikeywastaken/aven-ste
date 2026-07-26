@@ -12,6 +12,8 @@ import type { WorkSessionReport } from "./work-session";
 import {
   assertWorkVerifierMatches,
   isLegacyVerifierGetterMissing,
+  isVerifierNotConfigured,
+  WorkVerifierConfigurationError,
 } from "./work-stream-verifier-config";
 
 function unwrap<T>(value: unknown): T {
@@ -76,26 +78,35 @@ export async function recordVerifiedWork(input: {
   const client = await verifierClient();
   const digest = reportDigest(input.report);
 
-  const transaction = await client.verify_work({
-    stream_id: BigInt(input.streamId),
-    request_id: input.sessionId,
-    amount: input.amountUnits,
-    evidence_hash: digest,
-    active_duration_seconds: BigInt(
-      input.onchainActiveSeconds ?? input.report.session.activeSeconds ?? 0,
-    ),
-    work_start_ledger: input.workStartLedger ?? 0,
-  });
-  const sent = await transaction.signAndSend();
-  const claimTx = await client.get_withdrawal({
-    stream_id: BigInt(input.streamId),
-    request_id: input.sessionId,
-  });
-  const claim = unwrap<any>(claimTx.result);
+  try {
+    const transaction = await client.verify_work({
+      stream_id: BigInt(input.streamId),
+      request_id: input.sessionId,
+      amount: input.amountUnits,
+      evidence_hash: digest,
+      active_duration_seconds: BigInt(
+        input.onchainActiveSeconds ?? input.report.session.activeSeconds ?? 0,
+      ),
+      work_start_ledger: input.workStartLedger ?? 0,
+    });
+    const sent = await transaction.signAndSend();
+    const claimTx = await client.get_withdrawal({
+      stream_id: BigInt(input.streamId),
+      request_id: input.sessionId,
+    });
+    const claim = unwrap<any>(claimTx.result);
 
-  return {
-    transactionHash: confirmedTransactionHash(sent),
-    reportDigest: digest.toString("hex"),
-    reviewDeadlineLedger: Number(claim.deadline_ledger),
-  };
+    return {
+      transactionHash: confirmedTransactionHash(sent),
+      reportDigest: digest.toString("hex"),
+      reviewDeadlineLedger: Number(claim.deadline_ledger),
+    };
+  } catch (error) {
+    if (isVerifierNotConfigured(error)) {
+      throw new WorkVerifierConfigurationError(
+        "Withdrawal service is unavailable because this stream contract was deployed without configuring its verifier.",
+      );
+    }
+    throw error;
+  }
 }

@@ -14,12 +14,11 @@ fn setup() -> (
     Address,
 ) {
     let env = Env::default();
+    env.mock_all_auths();
     let admin = Address::generate(&env);
     let stream_contract = Address::generate(&env);
-    let contract_id = env.register(AttestationContract, ());
+    let contract_id = env.register(AttestationContract, (&admin, &stream_contract));
     let client = AttestationContractClient::new(&env, &contract_id);
-    env.mock_all_auths();
-    client.init(&admin, &stream_contract);
     let sender = Address::generate(&env);
     let recipient = Address::generate(&env);
     (env, client, stream_contract, sender, recipient)
@@ -36,21 +35,21 @@ fn mint_sample(
     client.mint_attestation(
         caller,
         &AttestationKind::Checkpoint,
-        &7, // stream_id
-        &String::from_str(env, ""),  // request_id (empty for checkpoint)
-        &0, // checkpoint_index
+        &7,                         // stream_id
+        &String::from_str(env, ""), // request_id (empty for checkpoint)
+        &0,                         // checkpoint_index
         sender,
         recipient,
-        &500_000_000, // amount_paid
+        &500_000_000,            // amount_paid
         &Address::generate(env), // asset
         &Category::Freelance,
         &String::from_str(env, "Design sprint"),
-        &10, // period_start_ledger
-        &20, // period_end_ledger
-        &0,  // active_duration_seconds
-        &true, // client_confirmed
-        &false, // auto_released
-        &None, // verifier
+        &10,                 // period_start_ledger
+        &20,                 // period_end_ledger
+        &0,                  // active_duration_seconds
+        &true,               // client_confirmed
+        &false,              // auto_released
+        &None,               // verifier
         &None::<BytesN<32>>, // report_hash
     )
 }
@@ -59,7 +58,7 @@ fn mint_sample(
 fn test_mint_success() {
     let (env, client, stream_contract, sender, recipient) = setup();
     let id = mint_sample(&env, &client, &stream_contract, &sender, &recipient);
-    
+
     let record = client.get_attestation(&id);
     assert_eq!(record.id, id);
     assert_eq!(record.kind, AttestationKind::Checkpoint);
@@ -82,7 +81,7 @@ fn test_mint_success() {
 fn test_mint_only_by_stream_contract() {
     let (env, client, _stream_contract, sender, recipient) = setup();
     let unauthorized_caller = Address::generate(&env);
-    
+
     let res = client.try_mint_attestation(
         &unauthorized_caller,
         &AttestationKind::Checkpoint,
@@ -128,7 +127,7 @@ fn test_verify_attestation() {
 #[test]
 fn test_invalid_payment_rejected() {
     let (env, client, stream_contract, sender, recipient) = setup();
-    
+
     let res = client.try_mint_attestation(
         &stream_contract,
         &AttestationKind::Checkpoint,
@@ -155,7 +154,7 @@ fn test_invalid_payment_rejected() {
 #[test]
 fn test_invalid_ledger_range_rejected() {
     let (env, client, stream_contract, sender, recipient) = setup();
-    
+
     let res = client.try_mint_attestation(
         &stream_contract,
         &AttestationKind::Checkpoint,
@@ -182,11 +181,11 @@ fn test_invalid_ledger_range_rejected() {
 #[test]
 fn test_title_too_long_rejected() {
     let (env, client, stream_contract, sender, recipient) = setup();
-    
+
     // Create an 81-character title
     let rust_string = std::string::String::from("a").repeat(81);
     let long_title = String::from_str(&env, &rust_string);
-    
+
     let res = client.try_mint_attestation(
         &stream_contract,
         &AttestationKind::Checkpoint,
@@ -214,7 +213,7 @@ fn test_title_too_long_rejected() {
 fn test_get_recipient_attestations() {
     let (env, client, stream_contract, sender, recipient) = setup();
     let id1 = mint_sample(&env, &client, &stream_contract, &sender, &recipient);
-    
+
     // Mint another one for the same recipient
     let id2 = client.mint_attestation(
         &stream_contract,
@@ -236,7 +235,7 @@ fn test_get_recipient_attestations() {
         &Some(Address::generate(&env)),
         &Some(BytesN::from_array(&env, &[8; 32])),
     );
-    
+
     let attestations = client.get_recipient_attestations(&recipient);
     assert_eq!(attestations.len(), 2);
     assert_eq!(attestations.get(0).unwrap(), id1);

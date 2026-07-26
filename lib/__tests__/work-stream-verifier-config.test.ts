@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   assertWorkVerifierMatches,
   isLegacyVerifierGetterMissing,
+  isVerifierNotConfigured,
   WorkVerifierConfigurationError,
 } from "../work-stream-verifier-config.ts";
 
@@ -55,6 +56,19 @@ test("does not hide unrelated contract or RPC failures", () => {
         'data:["trying to invoke non-existent contract function", get_stream]',
       ),
     ),
+    false,
+  );
+});
+
+test("recognizes the contract's VerifierNotConfigured error", () => {
+  assert.equal(
+    isVerifierNotConfigured(
+      new Error("HostError: Error(Contract, #31), Event log: verify_work"),
+    ),
+    true,
+  );
+  assert.equal(
+    isVerifierNotConfigured(new Error("Stream 31 was not found.")),
     false,
   );
 });

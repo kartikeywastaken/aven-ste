@@ -32,6 +32,10 @@ export function isLegacyVerifierGetterMissing(error: unknown): boolean {
   );
 }
 
+export function isVerifierNotConfigured(error: unknown): boolean {
+  return /error\s*\(\s*contract\s*,\s*#?\s*31\s*\)/i.test(errorText(error));
+}
+
 export function assertWorkVerifierMatches(
   serverVerifier: string,
   contractVerifier: unknown,

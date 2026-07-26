@@ -14,6 +14,7 @@ import {
   isValidStellarAccountAddress,
 } from "@/lib/stellar";
 import { STELLAR_EXPLORER } from "@/lib/contracts";
+import { ensureCurrentDeployment } from "@/lib/deployment-client";
 
 type Asset = "USDC" | "XLM";
 type TrustlineState = "idle" | "checking" | "ready" | "missing" | "blocked" | "error";
@@ -192,6 +193,7 @@ export default function CreateStreamPage() {
     setError(null);
     setTrustlineTxHash(null);
     try {
+      await ensureCurrentDeployment();
       const result = await createUsdcTrustline(address);
       setTrustlineTxHash(result.txHash);
       const status = await getUsdcTrustlineStatus(address);
@@ -229,6 +231,7 @@ export default function CreateStreamPage() {
     setLoading(true);
     setError(null);
     try {
+      await ensureCurrentDeployment();
       if (asset === "USDC") {
         const senderStatus = await getUsdcTrustlineStatus(address);
         if (!senderStatus.accountExists || !senderStatus.exists || !senderStatus.authorized) {

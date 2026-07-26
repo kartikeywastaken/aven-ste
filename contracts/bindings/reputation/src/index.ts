@@ -34,7 +34,7 @@ if (typeof window !== "undefined") {
 export const networks = {
   testnet: {
     networkPassphrase: "Test SDF Network ; September 2015",
-    contractId: "CDRIWRUCTMHX2HDVXEQ56MCCHDKZOS4JB6AXNBYZLWV5OGIV3UCSOWWO",
+    contractId: "CB5RPLWVGNWR3XD4J62R2LYFZJRM4XOJVVYNW7TW65TFGCPEHQCO5IXV",
   }
 } as const
 
@@ -120,8 +120,27 @@ export interface AttestationRecord {
 export interface Client {
   /**
    * Construct and simulate a init transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Legacy init kept for migration compatibility. Now requires admin auth.
    */
-  init: ({attestation_contract}: {attestation_contract: string}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  init: ({admin, attestation_contract}: {admin: string, attestation_contract: string}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /**
+   * Construct and simulate a upgrade transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Replace contract WASM while preserving the contract ID and all storage.
+   */
+  upgrade: ({new_wasm_hash}: {new_wasm_hash: Buffer}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /**
+   * Construct and simulate a get_admin transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Return the current stored administrator address.
+   */
+  get_admin: (options?: MethodOptions) => Promise<AssembledTransaction<Result<string>>>
+
+  /**
+   * Construct and simulate a set_admin transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Transfer administrator rights. The *stored* admin must sign.
+   */
+  set_admin: ({new_admin}: {new_admin: string}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
 
   /**
    * Construct and simulate a verify_claim transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
@@ -141,6 +160,8 @@ export interface Client {
 }
 export class Client extends ContractClient {
   static async deploy<T = Client>(
+        /** Constructor/Initialization Args for the contract's `__constructor` method */
+        {admin, attestation_contract}: {admin: string, attestation_contract: string},
     /** Options for initializing a Client as well as for calling a method, with extras specific to deploying. */
     options: MethodOptions &
       Omit<ContractClientOptions, "contractId"> & {
@@ -152,14 +173,18 @@ export class Client extends ContractClient {
         format?: "hex" | "base64";
       }
   ): Promise<AssembledTransaction<T>> {
-    return ContractClient.deploy(null, options)
+    return ContractClient.deploy({admin, attestation_contract}, options)
   }
   constructor(public readonly options: ContractClientOptions) {
     super(
       new ContractSpec([ "AAAABAAAAAAAAAAAAAAABUVycm9yAAAAAAAAAgAAAAAAAAASQWxyZWFkeUluaXRpYWxpemVkAAAAAAABAAAAAAAAAA5Ob3RJbml0aWFsaXplZAAAAAAAAg==",
         "AAAAAQAAAAAAAAAAAAAADlNjb3JlQnJlYWtkb3duAAAAAAAHAAAAAAAAAAphZ2VudF90YXNrAAAAAAALAAAAAAAAAAZib3VudHkAAAAAAAsAAAAAAAAACWZyZWVsYW5jZQAAAAAAAAsAAAAAAAAABWdyYW50AAAAAAAACwAAAAAAAAAGc2FsYXJ5AAAAAAALAAAAAAAAAAxzdWJzY3JpcHRpb24AAAALAAAAAAAAAAV0b3RhbAAAAAAAAAs=",
-        "AAAAAAAAAAAAAAAEaW5pdAAAAAEAAAAAAAAAFGF0dGVzdGF0aW9uX2NvbnRyYWN0AAAAEwAAAAEAAAPpAAAAAgAAAAM=",
+        "AAAAAAAAAEZMZWdhY3kgaW5pdCBrZXB0IGZvciBtaWdyYXRpb24gY29tcGF0aWJpbGl0eS4gTm93IHJlcXVpcmVzIGFkbWluIGF1dGguAAAAAAAEaW5pdAAAAAIAAAAAAAAABWFkbWluAAAAAAAAEwAAAAAAAAAUYXR0ZXN0YXRpb25fY29udHJhY3QAAAATAAAAAQAAA+kAAAACAAAAAw==",
+        "AAAAAAAAAEdSZXBsYWNlIGNvbnRyYWN0IFdBU00gd2hpbGUgcHJlc2VydmluZyB0aGUgY29udHJhY3QgSUQgYW5kIGFsbCBzdG9yYWdlLgAAAAAHdXBncmFkZQAAAAABAAAAAAAAAA1uZXdfd2FzbV9oYXNoAAAAAAAD7gAAACAAAAABAAAD6QAAAAIAAAAD",
+        "AAAAAAAAADBSZXR1cm4gdGhlIGN1cnJlbnQgc3RvcmVkIGFkbWluaXN0cmF0b3IgYWRkcmVzcy4AAAAJZ2V0X2FkbWluAAAAAAAAAAAAAAEAAAPpAAAAEwAAAAM=",
+        "AAAAAAAAADxUcmFuc2ZlciBhZG1pbmlzdHJhdG9yIHJpZ2h0cy4gVGhlICpzdG9yZWQqIGFkbWluIG11c3Qgc2lnbi4AAAAJc2V0X2FkbWluAAAAAAAAAQAAAAAAAAAJbmV3X2FkbWluAAAAAAAAEwAAAAEAAAPpAAAAAgAAAAM=",
         "AAAAAAAAAAAAAAAMdmVyaWZ5X2NsYWltAAAAAgAAAAAAAAAJcmVjaXBpZW50AAAAAAAAEwAAAAAAAAANbWluaW11bV9zY29yZQAAAAAAAAsAAAABAAAD6QAAAAEAAAAD",
+        "AAAAAAAAAAAAAAANX19jb25zdHJ1Y3RvcgAAAAAAAAIAAAAAAAAABWFkbWluAAAAAAAAEwAAAAAAAAAUYXR0ZXN0YXRpb25fY29udHJhY3QAAAATAAAAAA==",
         "AAAAAAAAAAAAAAANY29tcHV0ZV9zY29yZQAAAAAAAAEAAAAAAAAACXJlY2lwaWVudAAAAAAAABMAAAABAAAD6QAAAAsAAAAD",
         "AAAAAAAAAAAAAAATZ2V0X3Njb3JlX2JyZWFrZG93bgAAAAABAAAAAAAAAAlyZWNpcGllbnQAAAAAAAATAAAAAQAAA+kAAAfQAAAADlNjb3JlQnJlYWtkb3duAAAAAAAD",
         "AAAAAgAAAAAAAAAAAAAACENhdGVnb3J5AAAABgAAAAAAAAAAAAAACUZyZWVsYW5jZQAAAAAAAAAAAAAAAAAABlNhbGFyeQAAAAAAAAAAAAAAAAAGQm91bnR5AAAAAAAAAAAAAAAAAAVHcmFudAAAAAAAAAAAAAAAAAAACUFnZW50VGFzawAAAAAAAAAAAAAAAAAADFN1YnNjcmlwdGlvbg==",
@@ -173,6 +198,9 @@ export class Client extends ContractClient {
   }
   public readonly fromJSON = {
     init: this.txFromJSON<Result<void>>,
+        upgrade: this.txFromJSON<Result<void>>,
+        get_admin: this.txFromJSON<Result<string>>,
+        set_admin: this.txFromJSON<Result<void>>,
         verify_claim: this.txFromJSON<Result<boolean>>,
         compute_score: this.txFromJSON<Result<i128>>,
         get_score_breakdown: this.txFromJSON<Result<ScoreBreakdown>>

@@ -366,6 +366,27 @@ The web application is designed for Vercel or another Next.js-compatible platfor
 Amounts use Stellar's seven-decimal fixed-point representation. Human-readable
 values are converted at the client boundary in `lib/contracts.ts`.
 
+### Deployment safety
+
+Treat the stream, attestation, and reputation IDs as one deployment set. Changing
+an ID selects a different on-chain state database; existing stream IDs do not
+migrate to the new contract.
+
+Before promoting a deployment, run:
+
+```bash
+npm run verify:deployment
+```
+
+The check fails unless all three contracts are initialized, the server verifier
+matches the verifier stored by the stream contract, and native XLM is allowed.
+Vercel runs the same preflight automatically before `next build`.
+
+`NEXT_PUBLIC_*` values are embedded during the build. After changing them in
+Vercel, create a new deployment and open the canonical production URL. The app
+also compares the browser's embedded stream contract with the active server
+deployment before any contract mutation and reloads stale tabs.
+
 ## Security notes
 
 - Freighter signs browser transactions; the app never stores a user's wallet secret.

@@ -8,28 +8,6 @@
     [],
     [
       [
-        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-        {
-          "function": {
-            "contract_fn": {
-              "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
-              "function_name": "init",
-              "args": [
-                {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
-                },
-                {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
-                }
-              ]
-            }
-          },
-          "sub_invocations": []
-        }
-      ]
-    ],
-    [
-      [
         "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
         {
           "function": {
@@ -120,30 +98,10 @@
           "data": {
             "contract_data": {
               "ext": "v0",
-              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-              "key": {
-                "ledger_key_nonce": {
-                  "nonce": "801925984706572462"
-                }
-              },
-              "durability": "temporary",
-              "val": "void"
-            }
-          },
-          "ext": "v0"
-        },
-        "live_until": 6311999
-      },
-      {
-        "entry": {
-          "last_modified_ledger_seq": 0,
-          "data": {
-            "contract_data": {
-              "ext": "v0",
               "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
               "key": {
                 "ledger_key_nonce": {
-                  "nonce": "5541220902715666415"
+                  "nonce": "801925984706572462"
                 }
               },
               "durability": "temporary",
@@ -336,7 +294,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 535680
+        "live_until": 2073600
       },
       {
         "entry": {
@@ -367,7 +325,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 535680
+        "live_until": 2073600
       },
       {
         "entry": {
@@ -398,7 +356,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 535680
+        "live_until": 2073600
       },
       {
         "entry": {
@@ -458,7 +416,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 535680
+        "live_until": 2073600
       },
       {
         "entry": {
@@ -472,7 +430,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 535680
+        "live_until": 2073600
       }
     ]
   },

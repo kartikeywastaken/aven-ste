@@ -1,8 +1,8 @@
 #![no_std]
 
 use shared::{
-    AttestationKind, Category, StreamRecord, StreamStatus, LEDGERS_PER_UNIT, LEDGER_BUMP,
-    MAX_HISTORY_LEN, MAX_TITLE_LEN,
+    AttestationKind, Category, StreamRecord, StreamStatus, BUMP_AMOUNT, BUMP_THRESHOLD,
+    LEDGERS_PER_UNIT, MAX_HISTORY_LEN, MAX_TITLE_LEN,
 };
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, token, vec, Address,
@@ -21,6 +21,7 @@ enum DataKey {
     Withdrawal(u64, String),
     ReservedWithdrawals(u64),
     Verifier,
+    AllowedAsset(Address),
 }
 
 const MAX_WITHDRAWAL_REQUEST_ID_LEN: u32 = 64;
@@ -88,6 +89,7 @@ pub enum Error {
     InvalidActiveDuration = 34,
     PaymentMismatch = 35,
     OutstandingWithdrawals = 36,
+    AssetNotAllowed = 37,
 }
 
 #[contractevent(topics = ["stream_created"])]
@@ -180,6 +182,17 @@ pub struct StreamContract;
 
 #[contractimpl]
 impl StreamContract {
+    pub fn __constructor(env: Env, admin: Address, attestation_contract: Address) {
+        env.storage().instance().set(&DataKey::Admin, &admin);
+        env.storage()
+            .instance()
+            .set(&DataKey::AttestationContract, &attestation_contract);
+        env.storage().instance().set(&DataKey::NextStreamId, &1u64);
+        bump_instance(&env);
+    }
+
+    /// Legacy init — kept so existing deployed instances can still be called during
+    /// a migration window, but new deployments use `__constructor`.
     pub fn init(env: Env, admin: Address, attestation_contract: Address) -> Result<(), Error> {
         admin.require_auth();
         if env.storage().instance().has(&DataKey::Admin) {
@@ -194,13 +207,55 @@ impl StreamContract {
         Ok(())
     }
 
-    pub fn set_verifier(env: Env, admin: Address, verifier: Address) -> Result<(), Error> {
+    /// Return the current stored administrator address.
+    pub fn get_admin(env: Env) -> Result<Address, Error> {
+        env.storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)
+    }
+
+    /// Transfer administrator rights to a new address.
+    /// The *stored* admin must authenticate — not a caller-supplied address.
+    pub fn set_admin(env: Env, new_admin: Address) -> Result<(), Error> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
         admin.require_auth();
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+        bump_instance(&env);
+        Ok(())
+    }
+
+    /// Replace the running contract WASM while preserving the contract ID,
+    /// all storage, all streams, and all withdrawal records.
+    /// Only the stored admin may call this.
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), Error> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+        bump_instance(&env);
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
+        Ok(())
+    }
+
+    /// Return the current verifier address, if configured.
+    pub fn get_verifier(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::Verifier)
+    }
+
+    pub fn set_verifier(env: Env, admin: Address, verifier: Address) -> Result<(), Error> {
         let expected: Address = env
             .storage()
             .instance()
             .get(&DataKey::Admin)
             .ok_or(Error::NotInitialized)?;
+        expected.require_auth();
         if admin != expected {
             return Err(Error::NotAdmin);
         }
@@ -209,9 +264,42 @@ impl StreamContract {
         Ok(())
     }
 
-    /// Return the verifier account trusted to reserve verified work payments.
-    pub fn get_verifier(env: Env) -> Option<Address> {
-        env.storage().instance().get(&DataKey::Verifier)
+    // ─── Asset allowlist ───────────────────────────────────────────────────────
+
+    /// Approve an asset for use in new streams. Only the stored admin may call this.
+    pub fn add_allowed_asset(env: Env, asset: Address) -> Result<(), Error> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+        let key = DataKey::AllowedAsset(asset);
+        env.storage().instance().set(&key, &true);
+        bump_instance(&env);
+        Ok(())
+    }
+
+    /// Remove an asset from the allowlist. Existing streams using it are unaffected.
+    pub fn remove_allowed_asset(env: Env, asset: Address) -> Result<(), Error> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+        let key = DataKey::AllowedAsset(asset);
+        env.storage().instance().remove(&key);
+        bump_instance(&env);
+        Ok(())
+    }
+
+    /// Return whether an asset is currently approved for new streams.
+    pub fn is_allowed_asset(env: Env, asset: Address) -> bool {
+        env.storage()
+            .instance()
+            .get::<_, bool>(&DataKey::AllowedAsset(asset))
+            .unwrap_or(false)
     }
 
     /// Reserves payment for one npm-tracked work session.
@@ -362,9 +450,18 @@ impl StreamContract {
             return Err(Error::InsufficientDeposit);
         }
 
+        if !env
+            .storage()
+            .instance()
+            .get::<_, bool>(&DataKey::AllowedAsset(asset.clone()))
+            .unwrap_or(false)
+        {
+            return Err(Error::AssetNotAllowed);
+        }
+
         token::Client::new(&env, &asset).transfer(
             &sender,
-            &env.current_contract_address(),
+            env.current_contract_address(),
             &total_deposited,
         );
 
@@ -788,7 +885,7 @@ impl StreamContract {
 fn bump_instance(env: &Env) {
     env.storage()
         .instance()
-        .extend_ttl(LEDGER_BUMP, LEDGER_BUMP);
+        .extend_ttl(BUMP_THRESHOLD, BUMP_AMOUNT);
 }
 
 fn require_initialized(env: &Env) -> Result<(), Error> {
@@ -878,7 +975,7 @@ fn save_stream(env: &Env, stream: &StreamRecord) {
     env.storage().persistent().set(&key, stream);
     env.storage()
         .persistent()
-        .extend_ttl(&key, LEDGER_BUMP, LEDGER_BUMP);
+        .extend_ttl(&key, BUMP_THRESHOLD, BUMP_AMOUNT);
 }
 
 fn load_stream(env: &Env, stream_id: u64) -> Result<StreamRecord, Error> {
@@ -890,7 +987,7 @@ fn load_stream(env: &Env, stream_id: u64) -> Result<StreamRecord, Error> {
         .ok_or(Error::StreamNotFound)?;
     env.storage()
         .persistent()
-        .extend_ttl(&key, LEDGER_BUMP, LEDGER_BUMP);
+        .extend_ttl(&key, BUMP_THRESHOLD, BUMP_AMOUNT);
     Ok(stream)
 }
 
@@ -906,7 +1003,7 @@ fn save_reserved(env: &Env, stream_id: u64, amount: i128) {
     env.storage().persistent().set(&key, &amount);
     env.storage()
         .persistent()
-        .extend_ttl(&key, LEDGER_BUMP, LEDGER_BUMP);
+        .extend_ttl(&key, BUMP_THRESHOLD, BUMP_AMOUNT);
 }
 
 fn load_withdrawal(
@@ -922,7 +1019,7 @@ fn load_withdrawal(
         .ok_or(Error::WithdrawalNotFound)?;
     env.storage()
         .persistent()
-        .extend_ttl(&key, LEDGER_BUMP, LEDGER_BUMP);
+        .extend_ttl(&key, BUMP_THRESHOLD, BUMP_AMOUNT);
     Ok(record)
 }
 
@@ -931,7 +1028,7 @@ fn save_withdrawal(env: &Env, record: &WithdrawalRecord) {
     env.storage().persistent().set(&key, record);
     env.storage()
         .persistent()
-        .extend_ttl(&key, LEDGER_BUMP, LEDGER_BUMP);
+        .extend_ttl(&key, BUMP_THRESHOLD, BUMP_AMOUNT);
 }
 
 fn append_id(env: &Env, key: DataKey, id: u64) -> Result<(), Error> {
@@ -943,7 +1040,7 @@ fn append_id(env: &Env, key: DataKey, id: u64) -> Result<(), Error> {
     env.storage().persistent().set(&key, &list);
     env.storage()
         .persistent()
-        .extend_ttl(&key, LEDGER_BUMP, LEDGER_BUMP);
+        .extend_ttl(&key, BUMP_THRESHOLD, BUMP_AMOUNT);
     Ok(())
 }
 
