@@ -25,6 +25,24 @@ function required(name) {
   return value;
 }
 
+function dataNamespace() {
+  const value = required("AVEN_DATA_NAMESPACE");
+  if (value === process.env.AVEN_VERIFIER_SECRET?.trim()) {
+    throw new Error(
+      "AVEN_DATA_NAMESPACE must not contain AVEN_VERIFIER_SECRET. Use a stable non-secret label.",
+    );
+  }
+  if (/^S[A-Z2-7]{55}$/.test(value)) {
+    throw new Error("AVEN_DATA_NAMESPACE must not be a Stellar secret seed.");
+  }
+  if (!/^[a-z0-9](?:[a-z0-9._-]{1,62}[a-z0-9])?$/.test(value)) {
+    throw new Error(
+      "AVEN_DATA_NAMESPACE must be 3-64 lowercase letters, numbers, dots, underscores, or hyphens.",
+    );
+  }
+  return value;
+}
+
 function contractId(name) {
   const value = required(name);
   if (!StrKey.isValidContract(value)) {
@@ -52,6 +70,7 @@ async function readInstanceStorage(server, id) {
 }
 
 async function main() {
+  const persistenceNamespace = dataNamespace();
   const rpcUrl = required("NEXT_PUBLIC_SOROBAN_RPC_URL");
   const networkPassphrase = required("NEXT_PUBLIC_NETWORK_PASSPHRASE");
   const streamId = contractId("NEXT_PUBLIC_STREAM_CONTRACT_ID");
@@ -127,6 +146,7 @@ async function main() {
   }
 
   console.log(`Deployment verified on ${process.env.NEXT_PUBLIC_NETWORK_LABEL ?? "configured network"}.`);
+  console.log(`Data namespace: ${persistenceNamespace}`);
   console.log(`Stream:      ${streamId}`);
   console.log(`Attestation: ${attestationId}`);
   console.log(`Reputation:  ${reputationId}`);

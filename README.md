@@ -124,14 +124,17 @@ native XLM SAC, and testnet USDC configuration from
 | --- | --- | --- |
 | `UPSTASH_REDIS_REST_URL` | Production | Shared Redis REST endpoint |
 | `UPSTASH_REDIS_REST_TOKEN` | Production | Shared Redis credential |
-| `AVEN_DATA_NAMESPACE` | Optional | Explicit deployment data namespace |
+| `AVEN_DATA_NAMESPACE` | Production | Stable, non-secret deployment data namespace |
 | `AVEN_SESSION_STORE` | Local only | File-backed work-session store |
 | `AVEN_CLI_TOKEN_STORE` | Local only | File-backed CLI authorization store |
 
-Local development can use the file-backed stores under `data/`. Production should
-use Redis so work sessions and CLI authorizations remain available across devices
-and serverless instances. When `AVEN_DATA_NAMESPACE` is omitted, the stream contract
-ID is used so a fresh deployment starts with a clean data set.
+Local development can use the file-backed stores under `data/`. Production uses
+Redis so work sessions, repository links, and CLI authorizations remain available
+across devices and serverless instances. Set `AVEN_DATA_NAMESPACE` to the same
+stable label in localhost, Preview, and Production (for example,
+`aven-ste-testnet-v1`). Do not put a wallet seed, verifier secret, contract ID, or
+other credential in this variable. Changing the namespace intentionally selects a
+different logical data set, so contract deployments should not change it.
 
 ### GitHub integration
 
